@@ -24,28 +24,28 @@ export function getConnection(): Connection {
 // ─── Drop account types ───────────────────────────────────────────────────────
 
 export interface DropInfo {
-  address:           string;
-  creator:           string;
-  dropId:            number[];
-  tokenMint:         string;
-  amountPerClaim:    string;
-  maxClaims:         number;
-  currentClaims:     number;
-  remainingClaims:   number;
+  address: string;
+  creator: string;
+  dropId: number[];
+  tokenMint: string;
+  amountPerClaim: string;
+  maxClaims: number;
+  currentClaims: number;
+  remainingClaims: number;
   minFairscaleScore: number;
-  isNativeSol:       boolean;
-  isCanceled:        boolean;
-  isActive:          boolean;
-  isEnded:           boolean;
+  isNativeSol: boolean;
+  isCanceled: boolean;
+  isActive: boolean;
+  isEnded: boolean;
 }
 
 // ─── Claim record types ───────────────────────────────────────────────────────
 
 export interface ClaimHistoryItem {
-  claimer:   string;
+  claimer: string;
   claimedAt: number; // unix seconds
-  amount:    string;
-  txSig:     string; // for Solscan TX link
+  amount: string;
+  txSig: string; // for Solscan TX link
 }
 
 // ─── Claim check ──────────────────────────────────────────────────────────────
@@ -55,32 +55,22 @@ export async function hasClaimed(dropPubkey: PublicKey, claimer: PublicKey): Pro
   return (await getConnection().getAccountInfo(claimRecord)) !== null;
 }
 
-// ─── Claim message ────────────────────────────────────────────────────────────
-// Single source of truth for the 96-byte Ed25519 message.
-// Must match the layout verified by the on-chain program (claim_drop.rs).
-//
-// Layout:
-//   [0..22]  CLAIM_MESSAGE_PREFIX  ("solana-giveaway-claim:")
-//   [22..54] drop_id               (32 bytes)
-//   [54..86] claimer pubkey        (32 bytes)
-//   [86..94] timestamp             (i64 LE)
-//   [94..96] fairscale_score       (u16 LE)
-
 export function buildClaimMessage(
-  dropId:         number[],
-  claimer:        PublicKey,
-  timestamp:      number,
+  dropId: number[],
+  claimer: PublicKey,
+  timestamp: number,
   fairscaleScore: number,
 ): Uint8Array {
   const prefix = new TextEncoder().encode(CLAIM_MESSAGE_PREFIX);
-  const msg    = new Uint8Array(96);
-  const view   = new DataView(msg.buffer);
+  const prefixLen = prefix.length; // 15
+  const msg = new Uint8Array(89); // 15 + 32 + 32 + 8 + 2
+  const view = new DataView(msg.buffer);
 
   msg.set(prefix, 0);
-  msg.set(new Uint8Array(dropId), 22);
-  msg.set(claimer.toBytes(), 54);
-  view.setBigInt64(86, BigInt(timestamp), true);
-  view.setUint16(94, fairscaleScore, true);
+  msg.set(new Uint8Array(dropId), prefixLen);        // 15
+  msg.set(claimer.toBytes(), prefixLen + 32);        // 47
+  view.setBigInt64(prefixLen + 64, BigInt(timestamp), true); // 79
+  view.setUint16(prefixLen + 72, fairscaleScore, true);      // 87
 
   return msg;
 }
@@ -88,54 +78,54 @@ export function buildClaimMessage(
 // ─── Build claim transaction ──────────────────────────────────────────────────
 
 export async function buildClaimTransaction(
-  drop:       DropInfo,
-  claimer:    PublicKey,
+  drop: DropInfo,
+  claimer: PublicKey,
   claimToken: ClaimToken,
 ): Promise<Transaction> {
-  const conn        = getConnection();
-  const dropPubkey  = new PublicKey(drop.address);
+  const conn = getConnection();
+  const dropPubkey = new PublicKey(drop.address);
   const [platformConfig] = getPlatformConfigPda();
-  const [vault]          = getVaultPda(dropPubkey);
-  const [claimRecord]    = getClaimRecordPda(dropPubkey, claimer);
-  const creator          = new PublicKey(drop.creator);
+  const [vault] = getVaultPda(dropPubkey);
+  const [claimRecord] = getClaimRecordPda(dropPubkey, claimer);
+  const creator = new PublicKey(drop.creator);
 
   const ed25519Ix = Ed25519Program.createInstructionWithPublicKey({
     publicKey: bs58.decode(claimToken.backendPubkey),
-    message:   buildClaimMessage(drop.dropId, claimer, claimToken.timestamp, claimToken.fairscaleScore),
+    message: buildClaimMessage(drop.dropId, claimer, claimToken.timestamp, claimToken.fairscaleScore),
     signature: bs58.decode(claimToken.signature),
   });
 
   const ixData = new Uint8Array(8 + 8 + 2);
   const ixView = new DataView(ixData.buffer);
   ixData.set(DISC_CLAIM_DROP, 0);
-  ixView.setBigInt64(8,  BigInt(claimToken.timestamp),      true);
-  ixView.setUint16(16, claimToken.fairscaleScore,           true);
+  ixView.setBigInt64(8, BigInt(claimToken.timestamp), true);
+  ixView.setUint16(16, claimToken.fairscaleScore, true);
 
   let claimerTa = PROGRAM_ID;
-  let vaultTa   = PROGRAM_ID;
-  let tokProg   = PROGRAM_ID;
+  let vaultTa = PROGRAM_ID;
+  let tokProg = PROGRAM_ID;
 
   if (!drop.isNativeSol) {
     const mint = new PublicKey(drop.tokenMint);
-    claimerTa  = await getAssociatedTokenAddress(mint, claimer);
-    vaultTa    = await getAssociatedTokenAddress(mint, vault, true);
-    tokProg    = TOKEN_PROGRAM_ID;
+    claimerTa = await getAssociatedTokenAddress(mint, claimer);
+    vaultTa = await getAssociatedTokenAddress(mint, vault, true);
+    tokProg = TOKEN_PROGRAM_ID;
   }
 
   const claimIx = new TransactionInstruction({
     programId: PROGRAM_ID,
-    data:      Buffer.from(ixData),
+    data: Buffer.from(ixData),
     keys: [
-      { pubkey: dropPubkey,                                isSigner: false, isWritable: true  },
-      { pubkey: claimRecord,                               isSigner: false, isWritable: true  },
-      { pubkey: platformConfig,                            isSigner: false, isWritable: false },
-      { pubkey: claimer,                                   isSigner: true,  isWritable: true  },
-      { pubkey: creator,                                   isSigner: false, isWritable: true  },
-      { pubkey: vault,                                     isSigner: false, isWritable: true  },
-      { pubkey: claimerTa,                                 isSigner: false, isWritable: true  },
-      { pubkey: vaultTa,                                   isSigner: false, isWritable: true  },
-      { pubkey: tokProg,                                   isSigner: false, isWritable: false },
-      { pubkey: SystemProgram.programId,                   isSigner: false, isWritable: false },
+      { pubkey: dropPubkey, isSigner: false, isWritable: true },
+      { pubkey: claimRecord, isSigner: false, isWritable: true },
+      { pubkey: platformConfig, isSigner: false, isWritable: false },
+      { pubkey: claimer, isSigner: true, isWritable: true },
+      { pubkey: creator, isSigner: false, isWritable: true },
+      { pubkey: vault, isSigner: false, isWritable: true },
+      { pubkey: claimerTa, isSigner: false, isWritable: true },
+      { pubkey: vaultTa, isSigner: false, isWritable: true },
+      { pubkey: tokProg, isSigner: false, isWritable: false },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
       { pubkey: new PublicKey(SYSVAR_INSTRUCTIONS_PUBKEY), isSigner: false, isWritable: false },
     ],
   });
@@ -177,15 +167,15 @@ function parseDropAccount(address: string, raw: Uint8Array): DropInfo | null {
   const view = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
   let off = 8; // skip discriminator
 
-  const creator           = new PublicKey(raw.subarray(off, off + 32)).toBase58(); off += 32;
-  const dropId            = Array.from(raw.subarray(off, off + 32));               off += 32;
-  const tokenMint         = new PublicKey(raw.subarray(off, off + 32)).toBase58(); off += 32;
-  const amountPerClaim    = view.getBigUint64(off, true); off += 8;
-  const maxClaims         = view.getUint32(off, true);    off += 4;
-  const currentClaims     = view.getUint32(off, true);    off += 4;
-  const minFairscaleScore = view.getUint16(off, true);    off += 2;
-  const isNativeSol       = raw[off] === 1;               off += 1;
-  const isCanceled        = raw[off] === 1;
+  const creator = new PublicKey(raw.subarray(off, off + 32)).toBase58(); off += 32;
+  const dropId = Array.from(raw.subarray(off, off + 32)); off += 32;
+  const tokenMint = new PublicKey(raw.subarray(off, off + 32)).toBase58(); off += 32;
+  const amountPerClaim = view.getBigUint64(off, true); off += 8;
+  const maxClaims = view.getUint32(off, true); off += 4;
+  const currentClaims = view.getUint32(off, true); off += 4;
+  const minFairscaleScore = view.getUint16(off, true); off += 2;
+  const isNativeSol = raw[off] === 1; off += 1;
+  const isCanceled = raw[off] === 1;
 
   const remainingClaims = isCanceled ? 0 : maxClaims - currentClaims;
 
@@ -194,7 +184,7 @@ function parseDropAccount(address: string, raw: Uint8Array): DropInfo | null {
     creator,
     dropId,
     tokenMint,
-    amountPerClaim:    amountPerClaim.toString(),
+    amountPerClaim: amountPerClaim.toString(),
     maxClaims,
     currentClaims,
     remainingClaims,
@@ -202,7 +192,7 @@ function parseDropAccount(address: string, raw: Uint8Array): DropInfo | null {
     isNativeSol,
     isCanceled,
     isActive: !isCanceled && currentClaims < maxClaims,
-    isEnded:  !isCanceled && currentClaims >= maxClaims,
+    isEnded: !isCanceled && currentClaims >= maxClaims,
   };
 }
 
@@ -252,7 +242,7 @@ export async function fetchClaimHistory(dropAddress: string): Promise<ClaimHisto
   let dropPubkey: PublicKey;
   try { dropPubkey = new PublicKey(dropAddress); } catch { return []; }
 
-  const conn     = getConnection();
+  const conn = getConnection();
   const accounts = await conn.getProgramAccounts(PROGRAM_ID, {
     filters: [
       { dataSize: CLAIM_RECORD_ACCOUNT_SIZE },
@@ -262,11 +252,11 @@ export async function fetchClaimHistory(dropAddress: string): Promise<ClaimHisto
 
   const items = await Promise.all(accounts.map(async ({ pubkey: recPubkey, account }) => {
     const bytes = new Uint8Array(account.data);
-    const view  = new DataView(bytes.buffer);
+    const view = new DataView(bytes.buffer);
 
-    const claimer   = new PublicKey(bytes.subarray(40, 72)).toBase58(); // offset: 8+32=40
+    const claimer = new PublicKey(bytes.subarray(40, 72)).toBase58(); // offset: 8+32=40
     const claimedAt = Number(view.getBigInt64(72, true));               // offset: 40+32=72
-    const amount    = view.getBigUint64(80, true).toString();           // offset: 72+8=80
+    const amount = view.getBigUint64(80, true).toString();           // offset: 72+8=80
 
     let txSig = "";
     try {
@@ -299,14 +289,14 @@ export async function fetchDropCreationTime(dropAddress: string): Promise<number
 
 export function timeAgo(unixSeconds: number): string {
   const diff = Math.floor(Date.now() / 1000) - unixSeconds;
-  if (diff < 5)       return "just now";
-  if (diff < 60)      return `${diff} seconds ago`;
-  if (diff < 120)     return "a minute ago";
-  if (diff < 3600)    return `${Math.floor(diff / 60)} minutes ago`;
-  if (diff < 7200)    return "an hour ago";
-  if (diff < 86400)   return `${Math.floor(diff / 3600)} hours ago`;
-  if (diff < 172800)  return "a day ago";
-  if (diff < 604800)  return `${Math.floor(diff / 86400)} days ago`;
+  if (diff < 5) return "just now";
+  if (diff < 60) return `${diff} seconds ago`;
+  if (diff < 120) return "a minute ago";
+  if (diff < 3600) return `${Math.floor(diff / 60)} minutes ago`;
+  if (diff < 7200) return "an hour ago";
+  if (diff < 86400) return `${Math.floor(diff / 3600)} hours ago`;
+  if (diff < 172800) return "a day ago";
+  if (diff < 604800) return `${Math.floor(diff / 86400)} days ago`;
   if (diff < 1209600) return "a week ago";
   if (diff < 2592000) return `${Math.floor(diff / 604800)} weeks ago`;
   if (diff < 5184000) return "a month ago";

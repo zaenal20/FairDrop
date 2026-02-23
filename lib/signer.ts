@@ -1,15 +1,15 @@
-import nacl          from "tweetnacl";
-import bs58          from "bs58";
+import nacl from "tweetnacl";
+import bs58 from "bs58";
 import { PublicKey } from "@solana/web3.js";
 import { buildClaimMessage } from "./program";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface ClaimToken {
-  timestamp:      number;
+  timestamp: number;
   fairscaleScore: number;
-  signature:      string; // base58
-  backendPubkey:  string; // base58
+  signature: string; // base58
+  backendPubkey: string; // base58
 }
 
 // ─── Keypair loader ───────────────────────────────────────────────────────────
@@ -22,17 +22,12 @@ function loadBackendKeypair(): nacl.SignKeyPair {
 
 // ─── Sign ─────────────────────────────────────────────────────────────────────
 
-/**
- * Sign a claim token. Called only from /api/claim-token (server-side).
- * The resulting ClaimToken is passed to buildClaimTransaction on the client,
- * which uses it for Ed25519Program on-chain verification.
- */
 export function signClaimToken(
-  dropId:         Uint8Array,
-  claimerPubkey:  Uint8Array,
+  dropId: Uint8Array,
+  claimerPubkey: Uint8Array,
   fairscaleScore: number,
 ): ClaimToken {
-  const keypair   = loadBackendKeypair();
+  const keypair = loadBackendKeypair();
   const timestamp = Math.floor(Date.now() / 1000);
 
   // buildClaimMessage is the single source of truth for the 96-byte message layout
@@ -48,7 +43,7 @@ export function signClaimToken(
   return {
     timestamp,
     fairscaleScore,
-    signature:     bs58.encode(signature),
+    signature: bs58.encode(signature),
     backendPubkey: bs58.encode(keypair.publicKey),
   };
 }
